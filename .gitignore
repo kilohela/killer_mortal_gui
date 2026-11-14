@@ -1,1 +1,5 @@
 *
+!pairi.js
+!vendor/
+!vendor/i18next.min.js
+!vendor/i18next.LICENSE

@@ -60,6 +60,18 @@ body {
 .options-div > * {
     padding:10px;
 }
+.model-temperature-row {
+    display:flex;
+    align-items:center;
+    gap:10px;
+    margin-top:10px;
+}
+.model-temperature-row span {
+    flex:1;
+}
+.model-temperature-row input {
+    width:70px;
+}
 .modal {
     position: relative;
     padding: 25px;
@@ -314,15 +326,61 @@ h1{
     justify-content: space-around;
     gap: 10px;
 }
-.opt-info table {
-    width: 220px;
-    margin:10px;
-    background:var(--color-accent);
-}
-.opt-info table .tileImg {
-    width:calc(var(--tile-img-width) * 0.50);
-    height:calc(var(--tile-img-height) * 0.50);
+.opt-info .tileImg {
+    width:calc(var(--tile-img-width) * 0.65);
+    height:calc(var(--tile-img-height) * 0.65);
     margin:0px;
+    display:block;
+}
+.pairi-info .tileDiv {
+    width:auto;
+    height:auto;
+    flex-shrink:0;
+    line-height:0;
+}
+.opt-info.pairi-info {
+    background:var(--color-accent);
+    flex-shrink:0;
+    width:400px;
+    max-height:calc(var(--zoom)*735px);
+    overflow-y:auto;
+}
+body:has(.pairi-info) {
+    max-width:1450px;
+}
+.pairi-info > p {
+    margin:10px;
+}
+.pairi-header, .pairi-line {
+    display:grid;
+    grid-template-columns:minmax(0, 1fr) 3em;
+    align-items:center;
+    gap:3px;
+    margin:8px 10px;
+    white-space:nowrap;
+}
+.pairi-one-shanten .pairi-header, .pairi-one-shanten .pairi-line {
+    grid-template-columns:minmax(0, 1fr) 3em 3em;
+}
+.pairi-header > span:not(:first-child), .pairi-line > span:not(:first-child) {
+    text-align:right;
+    font-variant-numeric:tabular-nums;
+}
+.pairi-description {
+    display:flex;
+    align-items:center;
+    gap:3px;
+    min-width:0;
+}
+.pairi-draws {
+    display:flex;
+    flex-wrap:wrap;
+    align-items:center;
+    gap:0;
+}
+.pairi-info summary {
+    cursor:pointer;
+    margin:10px;
 }
 .controls {
     display:grid;
@@ -391,13 +449,13 @@ table, th, td {
     margin: 2px;
 }
 .generic-modal-body .tileImg {
-    width:calc(var(--tile-img-width) * 0.50);
-    height:calc(var(--tile-img-height) * 0.50);
+    width:calc(var(--tile-img-width) * 0.65);
+    height:calc(var(--tile-img-height) * 0.65);
     margin:0px;
 }
 .generic-modal-body .tileDiv {
-    width:calc(var(--tile-img-width) * 0.50 + 2px);
-    height:calc(var(--tile-img-height) * 0.50 + 2px);
+    width:calc(var(--tile-img-width) * 0.65 + 2px);
+    height:calc(var(--tile-img-height) * 0.65 + 2px);
     margin:0px;
 }
 .generic-modal-body table {
@@ -476,4 +534,38 @@ code {
     .opt-info {
         display:none;
     }
+}
+
+.board-column {
+    width:calc(var(--zoom) * 655px);
+    flex-shrink:0;
+}
+.outcome-chart {
+    margin:6px 0;
+    padding:6px 8px;
+    background:var(--color-accent);
+    display:flex;
+    align-items:center;
+    gap:12px;
+    height:120px;
+}
+.outcome-chart[hidden] {
+    display:none;
+}
+.outcome-chart > svg {
+    flex:1;
+    min-width:0;
+    height:100%;
+    cursor:pointer;
+}
+.outcome-values {
+    width:100px;
+    flex-shrink:0;
+    font-size:12px;
+    line-height:2;
+}
+.outcome-values > div {
+    display:flex;
+    justify-content:space-between;
+    font-variant-numeric:tabular-nums;
 }

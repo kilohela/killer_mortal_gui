@@ -2,11 +2,13 @@
 
 import { calculateMinimumShanten, calculateStandardShanten } from "./shanten.js";
 import { calculateUkeire } from "./efficiency.js"
+import { analyzeDiscards, tileIndex, tileNumber } from "./pairi.js"
 
 class GlobalState {
     constructor() {
         this.ui = new UI
         this.fullData = null // Full json -- maybe split this up some, super redundant!
+        this.models = [] // Primary first, then comparison models in report order
         this.gs = null // current round GameState
         this.ge = null // array of array of GameEvent
 
@@ -223,55 +225,72 @@ class UI {
         }
         return resultTypeStr
     }
-    getActionSpan(detail) {
-        let actionSpan = document.createElement('span')
-        let textContent = i18next.t(detail.action.type)
-        if (detail.action.type == 'hora' && detail.action.actor != detail.action.target) {
-           textContent = i18next.t('ron') // translate defaults to Tsumo. Change to Ron in this case            
-        }
-        actionSpan.innerHTML = textContent
-        // Some kans include pai, some don't.
-        let pai = detail.action.type.endsWith('kan') ? detail.action.consumed[0] : detail.action.pai
-        if (pai) {
-            let tiles = [pai]
-            if (detail.action.consumed && !detail.action.type.endsWith('kan')) {
-                tiles = detail.action.consumed
-            }
-            actionSpan.innerHTML += "&nbsp&nbsp&nbsp"
-            for (let i=0; i<tiles.length; i++) {
-                // let tileDiv = createTile(tenhou2str(detail.action.pai))
-                let tileDiv = createTile(tenhou2str(tiles[i]))
-                actionSpan.innerHTML += tileDiv.innerHTML
-            }
-        }
-        return actionSpan
-    }
     updateOptInfo() {
-        let gameEvent = GS.ge[GS.hand_counter][GS.ply_counter]
-        let mortalEval = gameEvent.mortalEval
+        let event = getCurrGe()
+        let ply = GS.ply_counter
         this.optInfo.replaceChildren()
-        let actualTable = document.createElement("table")
-        actualTable.classList.add('wider-table')
-        actualTable.classList.add('hover-rows')
-        this.optInfo.append(actualTable)
-        let table = document.createElement("table")
-        table.classList.add('wider-table')
-        table.classList.add('hover-rows')
-        this.optInfo.append(table)
-        addTableRow(table, [i18next.t('Action'), i18next.t('Q'), i18next.t('P')])
-        if (!GS.showMortal || !mortalEval) {
-            addTableRow(actualTable, [i18next.t("Player"), ""])
-            addTableRow(actualTable, [i18next.t("Mortal"), ""])
-            return
+        this.optInfo.classList.remove('pairi-one-shanten')
+        this.optInfo.style.visibility = GS.showMortal ? '' : 'hidden'
+        if (['chi', 'pon'].includes(event.mortalEval?.actual.type)) {
+            // Reuse the following post-call discard decision, including its
+            // public tile counts and legal discards.
+            ply++
+            event = GS.ge[GS.hand_counter][ply]
         }
-
-        addTableRow(actualTable, [i18next.t("Player"), this.getActionSpan(mortalEval.details[mortalEval.actual_index])])
-        addTableRow(actualTable, [i18next.t("Mortal"), this.getActionSpan(mortalEval.details[0])])
-    
-        for (let [idx, detail] of mortalEval.details.entries()) {
-            let actionSpan = this.getActionSpan(detail)
-            let row = [actionSpan, detail.q_value.toFixed(2), (detail.prob*100).toFixed(2)]
-            addTableRow(table, row)
+        const entry = event?.mortalEval
+        if (!entry || !entry.details.some(d => d.action.type == 'dahai' && d.action.actor == GS.heroPidx)) return
+        if (!event.pairi) event.pairi = calculatePairi(entry, ply)
+        const best = event.pairi[0].shanten
+        const header = document.createElement('div')
+        header.className = 'pairi-header'
+        if (best == 1) this.optInfo.classList.add('pairi-one-shanten')
+        else this.optInfo.classList.remove('pairi-one-shanten')
+        header.append(createElemWithText('span', best == 0 ? i18next.t('pairi-tenpai') : `${best} ${i18next.t('pairi-shanten')}`))
+        if (best <= 2) header.append(createElemWithText('span', i18next.t('pairi-count-heading')))
+        if (best == 1) header.append(createElemWithText('span', i18next.t('pairi-good-heading')))
+        this.optInfo.append(header)
+        if (best > 2) return
+        const worse = document.createElement('details')
+        worse.append(createElemWithText('summary', i18next.t('pairi-regress')))
+        for (const row of event.pairi) {
+            const line = document.createElement('div')
+            line.className = 'pairi-line'
+            const tile = createTile(tenhou2str(row.tile))
+            const action = entry.details.find(d => d.action.type == 'dahai' && d.action.pai == row.tile).action
+            if (GS.showMortal) tile.title = actionProbabilities(entry, action)
+            if (entry.actual.type == 'dahai' && entry.actual.pai == row.tile) tile.lastChild.classList.add('tileImgHighlight')
+            const description = document.createElement('span')
+            description.className = 'pairi-description'
+            description.append(i18next.t('pairi-cut'), tile, i18next.t('pairi-draw'))
+            const tiles = document.createElement('span')
+            tiles.className = 'pairi-draws'
+            for (const draw of row.effective) {
+                const image = createTile(tenhou2str(tileNumber(draw.tile)))
+                image.title = i18next.t('pairi-total', {count: draw.count})
+                if (draw.good) image.title += ` · ${i18next.t('pairi-good-heading')}`
+                tiles.append(image)
+            }
+            description.append(tiles)
+            line.append(description, createElemWithText('span', row.count))
+            if (best == 1) line.append(createElemWithText('span', row.shanten == 1 ? row.good : '—'))
+            if (row.shanten == best) this.optInfo.append(line)
+            else worse.append(line)
+        }
+        if (worse.children.length > 1) this.optInfo.append(worse)
+    }
+    addModelBars(svg, xloc, mortalEval, detail, height) {
+        const gap = Math.min(2, 10 / GS.models.length)
+        const width = Math.min(GS.C_db_mortBarWidth, (GS.C_db_tileWidth - 4 - gap*(GS.models.length-1)) / GS.models.length)
+        const left = xloc - (width*GS.models.length + gap*(GS.models.length-1))/2
+        for (const [idx, model] of GS.models.entries()) {
+            const matched = modelDetail(mortalEval, model, detail.action)
+            if (!matched) continue
+            const rect = createRect(left + idx*(width+gap), width, height,
+                matched.displaySoftNormProb*GS.C_cb_mortBarHeightRatio, model.color)
+            const title = document.createElementNS('http://www.w3.org/2000/svg', 'title')
+            title.textContent = probabilityText(model, matched)
+            rect.append(title)
+            svg.append(rect)
         }
     }
     updateGridInfo() {
@@ -362,7 +381,6 @@ class UI {
         let svgElement = callBars.firstElementChild
         let slot = 0
         for (let [idx, detail] of mortalEval.details.entries()) {
-            let Pval = detail.softNormProb*100
             let mortalDetail = !mortalEval.is_equal && idx==0
             if (detail.action.type == 'dahai' && !mortalDetail) {
                 continue // Skip tiles (unless it's a mismatch)
@@ -371,9 +389,7 @@ class UI {
                 continue // Not enough room in GUI to show more
             }
             let xloc = GS.C_db_tileWidth*GS.C_cb_widthFactor/2 + slot*GS.C_db_tileWidth*GS.C_cb_widthFactor
-            svgElement.appendChild(createRect(
-                xloc-GS.C_db_mortBarWidth/2, GS.C_db_mortBarWidth, GS.C_cb_heroBarHeight, Pval/100*GS.C_cb_mortBarHeightRatio, GS.C_colorBarMortal
-            ))
+            this.addModelBars(svgElement, xloc, mortalEval, detail, GS.C_cb_heroBarHeight)
             let textContent = i18next.t(detail.action.type)
             if (detail.action.type == 'hora' && detail.action.actor != detail.action.target) {
                 textContent = i18next.t('ron') // translate defaults to Tsumo. Change to Ron in this case            
@@ -466,18 +482,17 @@ class UI {
                 // TODO: Check code for this. For now assume due to illegal calls swaps
                 if (matchingDetailIdx != -1) {
                     let matchingDetail = mortalEval.details[matchingDetailIdx]
-                    let Pval = matchingDetail.softNormProb*100
+                    const tileDivs = this.hands[GS.heroPidx].querySelectorAll('div')
+                    const tileDiv = i == -1 ? tileDivs[tileDivs.length-1] : tileDivs[i]
+                    tileDiv.title = actionProbabilities(mortalEval, matchingDetail.action)
                     if (matchingDetailIdx == mortalEval.actual_index) {
-                        let tileDivs = this.hands[GS.heroPidx].querySelectorAll('div')
                         if (i==-1) {
                             tileDivs[tileDivs.length-1].lastChild.classList.add('tileImgHighlight')
                         } else {
                             tileDivs[i].lastChild.classList.add('tileImgHighlight')
                         }
                     }
-                    discardSvgElem.appendChild(createRect(
-                        xloc-GS.C_db_mortBarWidth/2, GS.C_db_mortBarWidth, GS.C_db_height, Pval/100*GS.C_cb_mortBarHeightRatio, GS.C_colorBarMortal
-                    ));
+                    this.addModelBars(discardSvgElem, xloc, mortalEval, matchingDetail, GS.C_db_height)
                 }
             }
             if (showDangerBars) {
@@ -621,7 +636,7 @@ class UI {
         let table = document.createElement("table")
         let metadata = document.querySelector('.about-metadata')
         metadata.replaceChildren(table)
-        addTableRow(table, [i18next.t('Engine'), GS.fullData['engine']])
+        addTableRow(table, [i18next.t('Engine'), GS.models[0].name])
         addTableRow(table, [i18next.t('Model tag'), GS.fullData['review']['model_tag']])
         addTableRow(table, [i18next.t('Mjai-reviewer version'), GS.fullData['version']])
         addTableRow(table, [i18next.t('Game length'), i18next.t(GS.fullData['game_length'])])
@@ -635,7 +650,11 @@ class UI {
             let s = `${m}/${r} = ${p}%`
             addTableRow(table, [i18next.t('Matches/total'), s])
         }
-        addTableRow(table, [i18next.t('Rating'), (GS.fullData.review.rating*100).toFixed(1)])
+        if (GS.fullData.review.grade) {
+            addTableRow(table, ['Points', GS.fullData.review.grade.points])
+        } else {
+            addTableRow(table, [i18next.t('Rating'), (GS.fullData.review.rating*100).toFixed(1)])
+        }
     }
     updateResultsTable() {
         let table = document.createElement("table")
@@ -952,7 +971,68 @@ function updateState() {
     GS.ui.updateHandInfo()
     GS.ui.updateDiscardPond()
     GS.ui.updateGridInfo()
+    updateOutcomeChart()
     // discardOverflowTest()
+}
+
+function updateOutcomeChart() {
+    const container = document.querySelector('.outcome-chart')
+    container.replaceChildren()
+    container.style.visibility = GS.showMortal ? '' : 'hidden'
+    const events = GS.ge[GS.hand_counter]
+    const points = events.flatMap((event, ply) => {
+        const prob = event.mortalEval?.overall_prob
+        return prob?.length == 4 ? [{ply, prob}] : []
+    })
+    container.hidden = points.length == 0
+    if (!points.length) return
+    const current = points.filter(point => point.ply <= GS.ply_counter).at(-1)
+    const start = points[0].ply
+    const end = points.at(-1).ply
+    const duration = Math.max(1, end-start)
+    const x = ply => 4 + (ply-start)/duration*492
+    const svgElem = (tag, attrs) => {
+        const elem = document.createElementNS('http://www.w3.org/2000/svg', tag)
+        for (const [key, value] of Object.entries(attrs)) elem.setAttribute(key, value)
+        return elem
+    }
+    const svg = svgElem('svg', {viewBox: '0 0 500 130', preserveAspectRatio: 'none',
+        role: 'img', 'aria-label': ['win', 'dealin', 'lateral', 'draw'].map(key => i18next.t(`outcome-${key}`)).join(' / ')})
+    const y = value => 116-value*104
+    const series = [[1, 'win', '#81c784'], [2, 'dealin', '#e57373'],
+        [3, 'lateral', '#fff176'], [0, 'draw', '#737373']]
+    const totals = points.map(() => 0)
+    for (const [index, key, color] of series) {
+        const bottom = points.map((p, i) => `${x(p.ply)},${y(totals[i])}`)
+        const top = points.map((p, i) => {
+            totals[i] += p.prob[index]
+            return `${x(p.ply)},${y(totals[i])}`
+        })
+        if (points.length == 1) {
+            top.push(`496,${y(totals[0])}`)
+            bottom.push(`496,${y(totals[0]-points[0].prob[index])}`)
+        }
+        svg.append(svgElem('polygon', {points: [...top, ...bottom.reverse()].join(' '), fill: color, opacity: .7}))
+        svg.append(svgElem('polyline', {points: top.join(' '), fill: 'none', stroke: color, 'stroke-width': 1}))
+    }
+    if (current) svg.append(svgElem('line', {x1: x(current.ply), x2: x(current.ply), y1: 10, y2: 118,
+        stroke: '#fff', 'stroke-width': 1.5}))
+    svg.onclick = event => {
+        const rect = svg.getBoundingClientRect()
+        const ply = Math.max(start, Math.min(end, start+((event.clientX-rect.left)/rect.width*500-4)/492*duration))
+        GS.ply_counter = points.reduce((best, p) => Math.abs(p.ply-ply) < Math.abs(best.ply-ply) ? p : best).ply
+        updateState()
+    }
+    const values = document.createElement('div')
+    values.className = 'outcome-values'
+    for (const [index, key, color] of [...series].reverse()) {
+        const row = document.createElement('div')
+        const label = createElemWithText('span', i18next.t(`outcome-${key}`))
+        label.style.color = color
+        row.append(label, createElemWithText('span', current ? (current.prob[index]*100).toFixed(1)+'%' : '—'))
+        values.append(row)
+    }
+    container.append(svg, values)
 }
 
 const waitType = {
@@ -1635,6 +1715,139 @@ function stopCondition(onlyMismatches) {
     return mortalEval && (!onlyMismatches || mismatch) ||
         GS.ply_counter == GS.ge[GS.hand_counter].length-1
 }
+function probabilityText(model, detail) {
+    let text = `${model.name} (T=${model.temperature}): ${(detail.displayProb*100).toFixed(2)}%`
+    if (model.temperature != 1) text += ` (${i18next.t('raw-probability')}: ${(detail.prob*100).toFixed(2)}%)`
+    return text
+}
+function actionProbabilities(entry, action) {
+    return GS.models.map(model => {
+        const detail = modelDetail(entry, model, action)
+        return detail ? probabilityText(model, detail) : null
+    }).filter(Boolean).join('\n')
+}
+function calculatePairi(entry, decisionPly = GS.ply_counter) {
+    const hand = entry.state.tehai.map(tm2t)
+    const melds = entry.state.fuuros.map(meld => {
+        const tiles = [...meld.consumed]
+        if (meld.pai != undefined) tiles.push(meld.pai)
+        if (meld.type == 'kakan') tiles.push(meld.pai)
+        return tiles.map(tileIndex)
+    })
+    const seen = Array(34).fill(0)
+    const see = tile => { seen[tileIndex(tile)]++ }
+    hand.forEach(see)
+    see(GS.fullData.split_logs[GS.hand_counter].log[0][2][0])
+    // Count public events only. A called discard is already in the river;
+    // add only the consumed tiles, never the called tile a second time.
+    for (let ply=0; ply<=decisionPly; ply++) {
+        const event = GS.ge[GS.hand_counter][ply]
+        if (event.dora_marker != undefined) see(event.dora_marker)
+        if (event.type == 'dahai' || event.type == 'kakan') see(event.pai)
+        if (['chi', 'pon', 'daiminkan', 'ankan'].includes(event.type)) event.consumed.forEach(see)
+    }
+    const remaining = seen.map(n => Math.max(0, 4-n))
+    const discards = [...new Set(entry.details.filter(d => d.action.type == 'dahai' && d.action.actor == GS.heroPidx).map(d => d.action.pai))]
+    const rows = analyzeDiscards(hand.map(tileIndex), melds, remaining, discards.map(tileIndex))
+    return discards.map(tile => ({...rows.find(r => r.tile == tileIndex(tile)), tile})).sort((a, b) =>
+        a.shanten-b.shanten || b.count-a.count || b.kinds-a.kinds || tileSort(a.tile, b.tile))
+}
+function readModels(data) {
+    const models = [{name: data.review.primary_engine_name || data.engine, color: GS.C_colorBarMortal, primary: true}]
+    const colors = ['#f59e0b', '#60a5fa', '#c084fc', '#f472b6', '#22d3ee']
+    function add(model) {
+        if (models.slice(1).some(m => model.model_tag ? m.model_tag == model.model_tag : m.name == model.name)) return
+        models.push({name: model.name || model.model_tag, model_tag: model.model_tag,
+            color: colors[models.length-1] || `hsl(${models.length*137 % 360}, 70%, 65%)`})
+    }
+    for (const model of data.review.alt_engine_meta || []) add(model)
+    for (const kyoku of data.review.kyokus) {
+        for (const entry of kyoku.entries) {
+            for (const model of entry.alt_engines || []) add(model)
+        }
+    }
+    for (const model of models) {
+        const saved = Number(localStorage.getItem(`modelTemperature:${model.name}`) || 1)
+        model.temperature = Number.isFinite(saved) && saved >= 0.1 && saved <= 5 ? saved : 1
+    }
+    return models
+}
+function actionKey(action) {
+    // Calls can list consumed tiles in a different order. Red tiles, actor,
+    // target and draw-discard must still identify the same exact decision.
+    return JSON.stringify([action.type, action.actor, action.target, action.pai,
+        [...(action.consumed || [])].sort(), action.tsumogiri || false])
+}
+function modelEvaluation(entry, model) {
+    return model.primary ? entry : (entry.alt_engines || []).find(alt =>
+        model.model_tag ? alt.model_tag == model.model_tag : alt.name == model.name)
+}
+function modelDetail(entry, model, action) {
+    const evaluation = modelEvaluation(entry, model)
+    return evaluation?.details.find(detail => actionKey(detail.action) == actionKey(action))
+}
+function temperatureProbabilities(probs, temperature) {
+    if (temperature == 1) return probs
+    const max = Math.max(...probs)
+    const weights = probs.map(p => Math.pow(p / max, 1 / temperature))
+    const total = sum(weights)
+    return weights.map(p => p / total)
+}
+function applyModelTemperatures() {
+    for (const kyoku of GS.fullData.review.kyokus) {
+        for (const entry of kyoku.entries) {
+            for (const model of GS.models) {
+                const evaluation = modelEvaluation(entry, model)
+                if (!evaluation) continue
+                const probs = temperatureProbabilities(evaluation.details.map(d => d.prob), model.temperature)
+                const bars = model.temperature == 1 ? evaluation.details.map(d => d.softNormProb) : normalizeAndSoften(probs, GS.C_soft_T)
+                evaluation.details.forEach((detail, idx) => {
+                    detail.displayProb = probs[idx]
+                    detail.displaySoftNormProb = bars[idx]
+                })
+            }
+        }
+    }
+}
+function connectTemperatureOptions() {
+    const container = document.getElementById('model-temperatures')
+    container.replaceChildren()
+    container.append(createParaElem(i18next.t('model-temperature-help')))
+    for (const model of GS.models) {
+        const row = document.createElement('label')
+        row.className = 'model-temperature-row'
+        const name = createElemWithText('span', model.name)
+        const input = document.createElement('input')
+        input.type = 'number'
+        input.min = '0.1'
+        input.max = '5'
+        input.step = '0.1'
+        input.value = model.temperature
+        input.addEventListener('change', () => {
+            const value = Number(input.value)
+            if (!Number.isFinite(value) || value < 0.1 || value > 5) {
+                input.value = model.temperature
+                return
+            }
+            model.temperature = value
+            localStorage.setItem(`modelTemperature:${model.name}`, value)
+            applyModelTemperatures()
+            updateState()
+        })
+        const reset = createElemWithText('button', i18next.t('reset-temperature'))
+        reset.type = 'button'
+        reset.addEventListener('click', event => {
+            event.preventDefault()
+            model.temperature = 1
+            input.value = 1
+            localStorage.removeItem(`modelTemperature:${model.name}`)
+            applyModelTemperatures()
+            updateState()
+        })
+        row.append(name, input, reset)
+        container.append(row)
+    }
+}
 function showModalAndWait(modal) {
     modal.showModal()
     modal.addEventListener('click', (event) => {
@@ -1668,7 +1881,9 @@ function toggleErrorThreshold() {
 }
 function connectUI() {
     // first part might run more than once when people change language
-    document.title = i18next.t("title")
+    document.title = i18next.t("title").replaceAll('Mortal', GS.models[0].name)
+    GS.ui.optInfo.classList.add('pairi-info')
+    connectTemperatureOptions()
     const roundInc = i18nElem("round-inc")
     const roundDec = i18nElem("round-dec")
     const prevMismatch = i18nElem("prev-mismatch")
@@ -1680,6 +1895,7 @@ function connectUI() {
     const options = i18nElem("options")
     const toggleShowHands =  i18nElem("toggle-hands")
     const toggleMortalAdvice = i18nElem("toggle-mortal-advice")
+    toggleMortalAdvice.innerHTML = toggleMortalAdvice.innerHTML.replaceAll('Mortal', GS.models[0].name)
     const toggleDealinRateElem = i18nElem("toggle-dealin-rate")
     const toggleErrorThresholdElem = i18nElem("toggle-error-threshold")
     const about =  i18nElem("about")
@@ -1996,6 +2212,7 @@ function getBody(data) {
 }
 function parseMortalJsonStr(data) {
     GS.fullData = data
+    GS.models = readModels(data)
     GS.heroPidx = GS.fullData.player_id
     GS.ui.setPovPidx(GS.fullData.player_id)
     GS.ge = []
@@ -2023,7 +2240,7 @@ function parseMortalJsonStr(data) {
 
 function normalizeMortalEvals(data) {
     for (let kyoku of data.review.kyokus) {
-        for (let mortalEval of kyoku.entries) {
+        for (let mortalEval of kyoku.entries.flatMap(entry => [entry, ...(entry.alt_engines || [])])) {
             let probs = mortalEval.details.map(x => x.prob)
             // Use soft versions for the bars so that tiny probs are a little more visible
             // It's just visual so black magic is Ok here.
@@ -2045,6 +2262,7 @@ function setMortalJsonStr(data) {
     data = parseMortalJsonStr(data)
     convertPai2Tenhou(data)
     normalizeMortalEvals(data)
+    applyModelTemperatures()
     mergeMortalEvals(data)
     calcDanger()
     addResult()
@@ -2151,4 +2369,3 @@ function main() {
     i18next.init(i18next_data).then(parseUrl(true))
 }
 main()
-
