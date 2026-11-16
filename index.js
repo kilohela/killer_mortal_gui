@@ -2,7 +2,7 @@
 
 import { calculateMinimumShanten, calculateStandardShanten } from "./shanten.js";
 import { calculateUkeire } from "./efficiency.js"
-import { analyzeDiscards, tileIndex, tileNumber } from "./pairi.js"
+import { analyzeDiscards, discardLosses, tileIndex, tileNumber } from "./pairi.js?d=33"
 
 class GlobalState {
     constructor() {
@@ -18,6 +18,7 @@ class GlobalState {
         this.heroPidx = null   // player index mortal reviewed
         this.showHands = false
         this.showMortal = true
+        this.showPairiLoss = false
         this.showDealinRate = null // set by localStorage
         this.uiConnected = false
 
@@ -35,6 +36,7 @@ class GlobalState {
         this.C_ccw_akaDiscard = 0.14
 
         this.C_soft_T = 2
+        this.scaleProbabilityBars = localStorage.getItem('scaleProbabilityBars') !== '0'
 
         this.mediaBreak = getComputedStyle(document.documentElement).getPropertyValue('--media-break')
         this.updateZoom()
@@ -228,6 +230,7 @@ class UI {
     updateOptInfo() {
         let event = getCurrGe()
         let ply = GS.ply_counter
+        const expanded = this.optInfo.querySelector('details')?.open
         this.optInfo.replaceChildren()
         this.optInfo.classList.remove('pairi-one-shanten')
         this.optInfo.style.visibility = GS.showMortal ? '' : 'hidden'
@@ -243,16 +246,21 @@ class UI {
         const best = event.pairi[0].shanten
         const header = document.createElement('div')
         header.className = 'pairi-header'
-        if (best == 1) this.optInfo.classList.add('pairi-one-shanten')
+        const showGood = best == 1 && !GS.showPairiLoss
+        if (showGood) this.optInfo.classList.add('pairi-one-shanten')
         else this.optInfo.classList.remove('pairi-one-shanten')
         header.append(createElemWithText('span', best == 0 ? i18next.t('pairi-tenpai') : `${best} ${i18next.t('pairi-shanten')}`))
         if (best <= 2) header.append(createElemWithText('span', i18next.t('pairi-count-heading')))
-        if (best == 1) header.append(createElemWithText('span', i18next.t('pairi-good-heading')))
+        if (showGood) header.append(createElemWithText('span', i18next.t('pairi-good-heading')))
         this.optInfo.append(header)
         if (best > 2) return
         const worse = document.createElement('details')
+        worse.open = expanded
         worse.append(createElemWithText('summary', i18next.t('pairi-regress')))
-        for (const row of event.pairi) {
+        const rows = GS.showPairiLoss ? discardLosses(event.pairi) : event.pairi
+        for (const [index, result] of rows.entries()) {
+            const loss = GS.showPairiLoss && result.shanten == best
+            const row = loss ? result : event.pairi[index]
             const line = document.createElement('div')
             line.className = 'pairi-line'
             const tile = createTile(tenhou2str(row.tile))
@@ -261,7 +269,7 @@ class UI {
             if (entry.actual.type == 'dahai' && entry.actual.pai == row.tile) tile.lastChild.classList.add('tileImgHighlight')
             const description = document.createElement('span')
             description.className = 'pairi-description'
-            description.append(i18next.t('pairi-cut'), tile, i18next.t('pairi-draw'))
+            description.append(i18next.t('pairi-cut'), tile, i18next.t(loss ? 'pairi-loss' : 'pairi-draw'))
             const tiles = document.createElement('span')
             tiles.className = 'pairi-draws'
             for (const draw of row.effective) {
@@ -272,7 +280,7 @@ class UI {
             }
             description.append(tiles)
             line.append(description, createElemWithText('span', row.count))
-            if (best == 1) line.append(createElemWithText('span', row.shanten == 1 ? row.good : '—'))
+            if (showGood) line.append(createElemWithText('span', row.shanten == 1 ? row.good : '—'))
             if (row.shanten == best) this.optInfo.append(line)
             else worse.append(line)
         }
@@ -286,7 +294,7 @@ class UI {
             const matched = modelDetail(mortalEval, model, detail.action)
             if (!matched) continue
             const rect = createRect(left + idx*(width+gap), width, height,
-                matched.displaySoftNormProb*GS.C_cb_mortBarHeightRatio, model.color)
+                (GS.scaleProbabilityBars ? matched.displaySoftNormProb : matched.displayProb)*GS.C_cb_mortBarHeightRatio, model.color)
             const title = document.createElementNS('http://www.w3.org/2000/svg', 'title')
             title.textContent = probabilityText(model, matched)
             rect.append(title)
@@ -1884,6 +1892,7 @@ function connectUI() {
     document.title = i18next.t("title").replaceAll('Mortal', GS.models[0].name)
     GS.ui.optInfo.classList.add('pairi-info')
     connectTemperatureOptions()
+    const scaleProbabilityBars = i18nElem('scale-probability-bars-label')
     const roundInc = i18nElem("round-inc")
     const roundDec = i18nElem("round-dec")
     const prevMismatch = i18nElem("prev-mismatch")
@@ -1921,6 +1930,16 @@ function connectUI() {
         return
     }
     GS.uiConnected = true
+    GS.ui.optInfo.addEventListener('click', event => {
+        if (event.target.closest('summary')) return
+        GS.showPairiLoss = !GS.showPairiLoss
+        GS.ui.updateOptInfo()
+    })
+    scaleProbabilityBars.addEventListener('click', () => {
+        GS.scaleProbabilityBars = !GS.scaleProbabilityBars
+        localStorage.setItem('scaleProbabilityBars', GS.scaleProbabilityBars ? '1' : '0')
+        updateState()
+    })
     const optionsModal = document.getElementById("options-modal")
     const closeOptionsModal = document.querySelector(".options-close")
     const aboutModal =  document.getElementById("about-modal")
@@ -2320,6 +2339,38 @@ function debugState() {
     console.log('event', getCurrGe())
 }
 
+async function showRecords() {
+    const root = new URL('/records/', window.location.href)
+    const params = new URLSearchParams(window.location.search)
+    const directory = new URL(params.get('directory') || root.href, root)
+    if (directory.origin != root.origin || !directory.pathname.startsWith(root.pathname)) return
+    const main = document.querySelector('main')
+    const heading = createElemWithText('h1', decodeURI(directory.pathname))
+    main.replaceChildren(heading)
+    try {
+        const response = await fetch(directory)
+        if (!response.ok) throw new Error(`${response.status} ${response.statusText}`)
+        const listing = new DOMParser().parseFromString(await response.text(), 'text/html')
+        const list = document.createElement('ul')
+        for (const link of listing.querySelectorAll('a[href]')) {
+            const target = new URL(link.getAttribute('href'), directory)
+            if (target.origin != root.origin || !target.pathname.startsWith(root.pathname)) continue
+            const folder = target.pathname.endsWith('/')
+            if (!folder && !target.pathname.toLowerCase().endsWith('.json')) continue
+            const url = new URL(window.location.pathname, window.location.origin)
+            url.searchParams.set(folder ? 'directory' : 'data', target.pathname)
+            const item = document.createElement('li')
+            const anchor = createElemWithText('a', link.textContent)
+            anchor.href = url.href
+            item.append(anchor)
+            list.append(item)
+        }
+        main.append(list)
+    } catch (error) {
+        main.append(createParaElem(error.message))
+    }
+}
+
 function parseUrl() {
     const urlParams = new URLSearchParams(window.location.search)
     let dataParam = urlParams.get('data')
@@ -2332,7 +2383,7 @@ function parseUrl() {
         GS.alphaTestMode = true
     }
     if (!dataParam) {
-        alert("Invalid URL: data parameter not given")
+        showRecords()
         return
     } 
     var xhr = new XMLHttpRequest();

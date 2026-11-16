@@ -135,3 +135,17 @@ export function analyzeDiscards(tiles, melds, remaining, discards) {
     }
     return results.sort((a, b) => a.shanten-b.shanten || b.count-a.count || b.kinds-a.kinds || a.tile-b.tile)
 }
+
+export function discardLosses(rows) {
+    const best = rows[0].shanten
+    const union = new Map()
+    for (const row of rows.filter(row => row.shanten == best)) {
+        for (const draw of row.effective) union.set(draw.tile, draw.count)
+    }
+    return rows.map(row => {
+        const kept = new Set(row.effective.map(draw => draw.tile))
+        const effective = [...union].filter(([tile]) => !kept.has(tile))
+            .sort(([a], [b]) => a-b).map(([tile, count]) => ({tile, count}))
+        return {...row, effective, count: effective.reduce((n, draw) => n+draw.count, 0)}
+    })
+}
