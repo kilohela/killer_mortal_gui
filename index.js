@@ -2340,7 +2340,7 @@ function debugState() {
 }
 
 async function showRecords() {
-    const root = new URL('/records/', window.location.href)
+    const root = new URL('./records/', window.location.href)
     const params = new URLSearchParams(window.location.search)
     const directory = new URL(params.get('directory') || root.href, root)
     if (directory.origin != root.origin || !directory.pathname.startsWith(root.pathname)) return
