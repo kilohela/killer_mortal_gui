@@ -146,6 +146,13 @@ const i18next_data = {
                 // Results
                 "Final"   : "Final", // Final score in score table
                 "Final Result:"   : "Final Result:", // Final result in accum-dealin-rate table
+                "Consensus score": "Multi-model consensus score",
+                "Consensus models": "Consensus models",
+                "Valid decisions": "Valid decisions / total",
+                "consensus-formula": "For each model m, temperature-adjust probabilities: pₘ(a) = qₘ(a)^(1/Tₘ) / Σᵦ qₘ(b)^(1/Tₘ). For each decision, R = maxₘ[pₘ(actual) / maxᵦ pₘ(b)], loss = min(1, −ln(R)/ln(20)) (loss = 1 when R = 0). Score = 100 × (1 − Σ loss / N), where N is the number of valid decisions. Bad-hand rate = decisions where every participating model gives the actual action probability < 5% / N.",
+                "consensus-policy": "Fixed temperatures: Mortal 1.00, Zenith 0.35, Comet 0.32, Miai 0.73. Use Mortal + Zenith + Comet; if Miai appears anywhere in the report, require all four throughout the match. Include only decisions with valid probabilities from every required model. A top choice from any model incurs no penalty. Match totals aggregate decisions across rounds; no valid decisions displays N/A. Display temperature settings do not affect scoring.",
+                "Bad-hand rate": "Bad-hand rate",
+                "All rounds": "All rounds",
                 "Round"   : "Round",
                 "Ron"     : "Ron",
                 "win-by"  : "{{type}} by {{winner}}",
@@ -393,6 +400,13 @@ const i18next_data = {
                 // Results
                 "Final"   : "结果", // Final score in score table
                 "Final Result:"   : "最终结果：", // Final result in accum-dealin-rate table
+                "Consensus score": "多模型综合评分",
+                "Consensus models": "参与评分模型",
+                "Valid decisions": "有效决策 / 总决策",
+                "consensus-formula": "对模型 m 的原始概率 q 做温度调整：pₘ(a) = qₘ(a)^(1/Tₘ) / Σᵦ qₘ(b)^(1/Tₘ)。每次决策取 R = maxₘ[pₘ(实际操作) / maxᵦ pₘ(b)]，损失 L = min(1, −ln(R)/ln(20))；R = 0 时 L = 1。综合评分 = 100 × (1 − ΣL / N)，N 为有效决策数。恶手率 = 所有参与模型对实际操作的调整后概率均严格低于 5% 的决策数 / N。",
+                "consensus-policy": "固定温度：Mortal 1.00、Zenith 0.35、Comet 0.32、Miai 0.73。默认使用 Mortal、Zenith、Comet；报告任一处出现 Miai，则整场统一要求四模型。只统计所有参与模型概率均有效的共同决策；任一模型将实际操作列为最高概率操作，该决策即不扣分。全局按所有小局的有效决策汇总；无有效决策显示 N/A。界面中的显示温度设置不影响评分。",
+                "Bad-hand rate": "恶手率",
+                "All rounds": "全局",
                 "Round"   : "局",
                 "Ron"     : "荣和",
                 "Tsumo"   : "自摸",

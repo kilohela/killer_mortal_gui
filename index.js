@@ -4,6 +4,8 @@ import { calculateMinimumShanten, calculateStandardShanten } from "./shanten.js"
 import { calculateUkeire } from "./efficiency.js"
 import { analyzeDiscards, discardLosses, tileIndex, tileNumber } from "./pairi.js?d=33"
 
+import { consensusMetrics } from "./consensus.js"
+
 class GlobalState {
     constructor() {
         this.ui = new UI
@@ -658,15 +660,21 @@ class UI {
             let s = `${m}/${r} = ${p}%`
             addTableRow(table, [i18next.t('Matches/total'), s])
         }
-        if (GS.fullData.review.grade) {
-            addTableRow(table, ['Points', GS.fullData.review.grade.points])
-        } else {
-            addTableRow(table, [i18next.t('Rating'), (GS.fullData.review.rating*100).toFixed(1)])
-        }
+        const consensus = consensusMetrics(GS.fullData.review)
+        addTableRow(table, [i18next.t('Consensus score'), consensus.total.score === null ? 'N/A' : consensus.total.score.toFixed(2)])
+        addTableRow(table, [i18next.t('Bad-hand rate'), consensus.total.badRate === null ? 'N/A' : `${(consensus.total.badRate * 100).toFixed(2)}%`])
+        addTableRow(table, [i18next.t('Consensus models'), consensus.models.join(' + ')])
+        addTableRow(table, [i18next.t('Valid decisions'), `${consensus.total.validDecisions}/${consensus.total.totalDecisions}`])
+        metadata.append(createParaElem(i18next.t('consensus-formula')))
+        metadata.append(createParaElem(i18next.t('consensus-policy')))
     }
     updateResultsTable() {
         let table = document.createElement("table")
-        this.infoRoundTable.replaceChildren(table)
+        const consensus = consensusMetrics(GS.fullData.review)
+        const metricText = stats => `${i18next.t('Consensus score')}: ${stats.score === null ? 'N/A' : stats.score.toFixed(2)} · ${i18next.t('Bad-hand rate')}: ${stats.badRate === null ? 'N/A' : (stats.badRate * 100).toFixed(2) + '%'}`
+        const summary = createParaElem(`${i18next.t('All rounds')} — ${metricText(consensus.total)}`)
+        summary.title = `${consensus.models.join(' + ')} · ${consensus.total.validDecisions}/${consensus.total.totalDecisions}`
+        this.infoRoundTable.replaceChildren(summary, table)
         let hand_counter = 0
         let tr = table.insertRow()
         let cell = tr.insertCell()
@@ -677,6 +685,9 @@ class UI {
                 cell.textContent = `${relativeToHeroStr(pidx)}`
             }
             if (i==0) {cell = tr.insertCell()}
+        }
+        for (const heading of ['Consensus score', 'Bad-hand rate']) {
+            tr.insertCell().textContent = i18next.t(heading)
         }
         for (let [roundNum, currGeList] of GS.ge.entries()) {
             GS.gs = new GameState(GS.fullData.split_logs[roundNum].log[0])
@@ -708,6 +719,10 @@ class UI {
                     cell.classList.add('medium-win')
                 }
             }
+            const stats = consensus.rounds[roundNum]
+            tr.insertCell().textContent = stats.score === null ? 'N/A' : stats.score.toFixed(2)
+            tr.insertCell().textContent = stats.badRate === null ? 'N/A' : `${(stats.badRate * 100).toFixed(2)}%`
+            tr.title = `${consensus.models.join(' + ')} · ${stats.validDecisions}/${stats.totalDecisions}`
             hand_counter++
         }
         tr = table.insertRow()
